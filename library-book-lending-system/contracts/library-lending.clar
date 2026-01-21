@@ -64,3 +64,70 @@
 )
 
 (define-map librarian-permissions principal bool)
+
+;; Read-only functions
+(define-read-only (get-book (book-id uint))
+  (map-get? books book-id)
+)
+
+(define-read-only (get-loan (book-id uint) (borrower principal))
+  (map-get? loans { book-id: book-id, borrower: borrower })
+)
+
+(define-read-only (is-available (book-id uint))
+  (match (map-get? books book-id)
+    book (> (get available-copies book) u0)
+    false
+  )
+)
+
+(define-read-only (get-user-active-loans (user principal))
+  (default-to u0 (map-get? user-active-loans user))
+)
+
+(define-read-only (get-user-total-borrows (user principal))
+  (default-to u0 (map-get? user-total-borrows user))
+)
+
+(define-read-only (get-book-nonce)
+  (var-get book-nonce)
+)
+
+(define-read-only (get-reservation (book-id uint) (reserver principal))
+  (map-get? reservations { book-id: book-id, reserver: reserver })
+)
+
+(define-read-only (is-overdue (book-id uint) (borrower principal))
+  (match (map-get? loans { book-id: book-id, borrower: borrower })
+    loan (and 
+      (not (get returned loan))
+      (> stacks-block-height (get due-date loan))
+    )
+    false
+  )
+)
+
+(define-read-only (get-book-rating (book-id uint))
+  (match (map-get? books book-id)
+    book (if (> (get rating-count book) u0)
+      (ok (/ (get rating-sum book) (get rating-count book)))
+      (ok u0)
+    )
+    err-not-found
+  )
+)
+
+(define-read-only (is-librarian (user principal))
+  (or 
+    (is-eq user contract-owner)
+    (default-to false (map-get? librarian-permissions user))
+  )
+)
+
+(define-read-only (get-total-books-borrowed)
+  (var-get total-books-borrowed)
+)
+
+(define-read-only (get-total-late-returns)
+  (var-get total-late-returns)
+)
