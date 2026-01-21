@@ -311,3 +311,112 @@
     (ok true)
   )
 )
+
+;; #[allow(unchecked_data)]
+(define-public (add-copies (book-id uint) (additional-copies uint))
+  (let
+    (
+      (book (unwrap! (map-get? books book-id) err-not-found))
+    )
+    (asserts! (is-librarian tx-sender) err-unauthorized)
+    (asserts! (> additional-copies u0) err-invalid-input)
+    (map-set books book-id
+      (merge book {
+        total-copies: (+ (get total-copies book) additional-copies),
+        available-copies: (+ (get available-copies book) additional-copies)
+      })
+    )
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (grant-librarian-permission (user principal))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-unauthorized)
+    (map-set librarian-permissions user true)
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (revoke-librarian-permission (user principal))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-unauthorized)
+    (map-set librarian-permissions user false)
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (remove-book (book-id uint))
+  (let
+    (
+      (book (unwrap! (map-get? books book-id) err-not-found))
+    )
+    (asserts! (is-librarian tx-sender) err-unauthorized)
+    (asserts! (is-eq (get available-copies book) (get total-copies book)) err-not-available)
+    (map-delete books book-id)
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (extend-loan (book-id uint) (additional-blocks uint))
+  (let
+    (
+      (borrower tx-sender)
+      (loan (unwrap! (map-get? loans { book-id: book-id, borrower: borrower }) err-not-borrowed))
+    )
+    (asserts! (not (get returned loan)) err-not-borrowed)
+    (asserts! (<= additional-blocks u500) err-invalid-input)
+    (map-set loans 
+      { book-id: book-id, borrower: borrower }
+      (merge loan { 
+        due-date: (+ (get due-date loan) additional-blocks)
+      })
+    )
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (update-book-info 
+  (book-id uint)
+  (title (string-ascii 100))
+  (author (string-ascii 100))
+  (category (string-ascii 50)))
+  (let
+    (
+      (book (unwrap! (map-get? books book-id) err-not-found))
+    )
+    (asserts! (is-librarian tx-sender) err-unauthorized)
+    (map-set books book-id
+      (merge book {
+        title: title,
+        author: author,
+        category: category
+      })
+    )
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (reduce-copies (book-id uint) (copies-to-remove uint))
+  (let
+    (
+      (book (unwrap! (map-get? books book-id) err-not-found))
+    )
+    (asserts! (is-librarian tx-sender) err-unauthorized)
+    (asserts! (>= (get available-copies book) copies-to-remove) err-not-available)
+    (asserts! (>= (get total-copies book) copies-to-remove) err-invalid-input)
+    (map-set books book-id
+      (merge book {
+        total-copies: (- (get total-copies book) copies-to-remove),
+        available-copies: (- (get available-copies book) copies-to-remove)
+      })
+    )
+    (ok true)
+  )
+)
