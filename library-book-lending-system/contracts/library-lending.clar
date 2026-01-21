@@ -131,3 +131,183 @@
 (define-read-only (get-total-late-returns)
   (var-get total-late-returns)
 )
+
+;; Public functions
+;; #[allow(unchecked_data)]
+(define-public (add-book 
+  (title (string-ascii 100))
+  (author (string-ascii 100))
+  (isbn (string-ascii 20))
+  (total-copies uint)
+  (category (string-ascii 50)))
+  (let
+    (
+      (book-id (var-get book-nonce))
+    )
+    (asserts! (is-librarian tx-sender) err-unauthorized)
+    (asserts! (> total-copies u0) err-invalid-input)
+    (map-set books book-id
+      {
+        title: title,
+        author: author,
+        isbn: isbn,
+        total-copies: total-copies,
+        available-copies: total-copies,
+        added-by: tx-sender,
+        category: category,
+        rating-sum: u0,
+        rating-count: u0
+      }
+    )
+    (var-set book-nonce (+ book-id u1))
+    (ok book-id)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (borrow-book (book-id uint) (loan-period uint))
+  (let
+    (
+      (book (unwrap! (map-get? books book-id) err-not-found))
+      (borrower tx-sender)
+      (existing-loan (map-get? loans { book-id: book-id, borrower: borrower }))
+      (due-date (+ stacks-block-height loan-period))
+    )
+    (asserts! (> (get available-copies book) u0) err-not-available)
+    (asserts! (<= loan-period max-loan-period) err-invalid-input)
+    (asserts! 
+      (or 
+        (is-none existing-loan)
+        (get returned (unwrap-panic existing-loan))
+      ) 
+      err-already-borrowed
+    )
+    (map-set loans 
+      { book-id: book-id, borrower: borrower }
+      {
+        borrowed-at: stacks-block-height,
+        due-date: due-date,
+        returned: false,
+        return-date: u0
+      }
+    )
+    (map-set books book-id
+      (merge book { available-copies: (- (get available-copies book) u1) })
+    )
+    (map-set user-active-loans borrower (+ (get-user-active-loans borrower) u1))
+    (map-set user-total-borrows borrower (+ (get-user-total-borrows borrower) u1))
+    (var-set total-books-borrowed (+ (var-get total-books-borrowed) u1))
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (return-book (book-id uint))
+  (let
+    (
+      (book (unwrap! (map-get? books book-id) err-not-found))
+      (borrower tx-sender)
+      (loan (unwrap! (map-get? loans { book-id: book-id, borrower: borrower }) err-not-borrowed))
+      (is-late (> stacks-block-height (get due-date loan)))
+    )
+    (asserts! (not (get returned loan)) err-not-borrowed)
+    (map-set loans 
+      { book-id: book-id, borrower: borrower }
+      (merge loan { 
+        returned: true,
+        return-date: stacks-block-height
+      })
+    )
+    (map-set books book-id
+      (merge book { available-copies: (+ (get available-copies book) u1) })
+    )
+    (map-set user-active-loans borrower (- (get-user-active-loans borrower) u1))
+    (if is-late
+      (var-set total-late-returns (+ (var-get total-late-returns) u1))
+      true
+    )
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (reserve-book (book-id uint))
+  (let
+    (
+      (book (unwrap! (map-get? books book-id) err-not-found))
+      (reserver tx-sender)
+      (existing-reservation (map-get? reservations { book-id: book-id, reserver: reserver }))
+    )
+    (asserts! 
+      (or 
+        (is-none existing-reservation)
+        (not (get active (unwrap-panic existing-reservation)))
+      )
+      err-already-reserved
+    )
+    (map-set reservations 
+      { book-id: book-id, reserver: reserver }
+      {
+        reserved-at: stacks-block-height,
+        active: true
+      }
+    )
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (cancel-reservation (book-id uint))
+  (let
+    (
+      (reserver tx-sender)
+      (reservation (unwrap! (map-get? reservations { book-id: book-id, reserver: reserver }) err-no-reservation))
+    )
+    (asserts! (get active reservation) err-no-reservation)
+    (map-set reservations 
+      { book-id: book-id, reserver: reserver }
+      (merge reservation { active: false })
+    )
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (rate-book (book-id uint) (rating uint))
+  (let
+    (
+      (book (unwrap! (map-get? books book-id) err-not-found))
+      (rater tx-sender)
+      (existing-rating (map-get? user-ratings { book-id: book-id, rater: rater }))
+    )
+    (asserts! (and (>= rating u1) (<= rating u5)) err-invalid-input)
+    (asserts! (is-none existing-rating) err-rating-exists)
+    (map-set user-ratings { book-id: book-id, rater: rater } rating)
+    (map-set books book-id
+      (merge book {
+        rating-sum: (+ (get rating-sum book) rating),
+        rating-count: (+ (get rating-count book) u1)
+      })
+    )
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (update-rating (book-id uint) (new-rating uint))
+  (let
+    (
+      (book (unwrap! (map-get? books book-id) err-not-found))
+      (rater tx-sender)
+      (old-rating (unwrap! (map-get? user-ratings { book-id: book-id, rater: rater }) err-not-found))
+    )
+    (asserts! (and (>= new-rating u1) (<= new-rating u5)) err-invalid-input)
+    (map-set user-ratings { book-id: book-id, rater: rater } new-rating)
+    (map-set books book-id
+      (merge book {
+        rating-sum: (+ (- (get rating-sum book) old-rating) new-rating)
+      })
+    )
+    (ok true)
+  )
+)
